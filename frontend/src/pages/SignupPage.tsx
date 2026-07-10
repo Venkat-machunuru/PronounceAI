@@ -48,9 +48,13 @@ function SignupPage() {
       );
 
       navigate("/login");
-    } catch {
+    } catch (requestError: any) {
+      console.error(requestError);
+      const backendDetail =
+        requestError.response?.data?.detail;
       setError(
-        "Signup failed. The email may already be registered."
+        backendDetail ||
+          "Signup failed. Check your connection to the backend."
       );
     } finally {
       setLoading(false);
