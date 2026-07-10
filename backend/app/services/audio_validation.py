@@ -24,14 +24,18 @@ def get_audio_duration(
         "-",
     ]
 
+    kwargs = {}
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        kwargs["creationflags"] = (
+            subprocess.CREATE_NO_WINDOW
+        )
+
     process = subprocess.run(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        creationflags=(
-            subprocess.CREATE_NO_WINDOW
-        ),
+        **kwargs
     )
 
     ffmpeg_output = process.stderr
