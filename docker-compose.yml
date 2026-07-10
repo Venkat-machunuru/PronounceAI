@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: pronounce_ai_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Postgres@123
+      POSTGRES_DB: pronounce_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pronounce_ai_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://postgres:Postgres@123@db:5432/pronounce_ai
+      - SECRET_KEY=3437e77581160ea6f5055aad4a1921ee8ac28a3f73e2f0d4aa3be55eddcebac4
+    volumes:
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      - db
+
+volumes:
+  pgdata:

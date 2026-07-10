@@ -1,4 +1,5 @@
 from pathlib import Path
+from shutil import copyfileobj
 from uuid import uuid4
 
 from fastapi import (
@@ -9,13 +10,20 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.auth import get_current_user
+from app.api.auth import (
+    get_current_user,
+)
 from app.db.database import get_db
-from app.models.recording import Recording
+from app.models.recording import (
+    Recording,
+)
 from app.models.user import User
-from app.schemas.recording import RecordingResponse
+from app.services.audio_validation import (
+    validate_audio_duration,
+)
 
 
 router = APIRouter(
@@ -24,7 +32,9 @@ router = APIRouter(
 )
 
 
-UPLOAD_DIRECTORY = Path("uploads/audio")
+UPLOAD_DIRECTORY = Path(
+    "uploads/audio"
+)
 
 UPLOAD_DIRECTORY.mkdir(
     parents=True,
@@ -40,15 +50,18 @@ ALLOWED_EXTENSIONS = {
 }
 
 
-MAX_FILE_SIZE = 15 * 1024 * 1024
+MAX_FILE_SIZE = (
+    15 * 1024 * 1024
+)
 
 
 @router.post(
     "/upload",
-    response_model=RecordingResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=(
+        status.HTTP_201_CREATED
+    ),
 )
-async def upload_recording(
+def upload_recording(
     audio: UploadFile = File(...),
     current_user: User = Depends(
         get_current_user
@@ -56,78 +69,202 @@ async def upload_recording(
     db: Session = Depends(get_db),
 ):
     original_filename = (
-        audio.filename or "recording"
+        audio.filename
+        or "recording.webm"
     )
 
-    extension = Path(
-        original_filename
-    ).suffix.lower()
+    extension = (
+        Path(original_filename)
+        .suffix
+        .lower()
+    )
 
-    if extension not in ALLOWED_EXTENSIONS:
+
+    if (
+        extension
+        not in ALLOWED_EXTENSIONS
+    ):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=(
+                status
+                .HTTP_415_UNSUPPORTED_MEDIA_TYPE
+            ),
             detail=(
                 "Unsupported audio format. "
-                "Allowed formats: "
-                "MP3, WAV, M4A, and WEBM."
+                "Use MP3, WAV, M4A, "
+                "or WEBM."
             ),
         )
 
-    file_content = await audio.read()
-
-    if not file_content:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The uploaded audio file is empty.",
-        )
-
-    if len(file_content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail=(
-                "Audio file is too large. "
-                "Maximum size is 15 MB."
-            ),
-        )
 
     stored_filename = (
-        f"{uuid4().hex}{extension}"
+        f"{uuid4().hex}"
+        f"{extension}"
     )
 
     file_path = (
-        UPLOAD_DIRECTORY / stored_filename
+        UPLOAD_DIRECTORY
+        / stored_filename
     )
 
+
     try:
-        file_path.write_bytes(
-            file_content
-        )
+        with file_path.open(
+            "wb"
+        ) as destination:
+            copyfileobj(
+                audio.file,
+                destination,
+            )
 
-        recording = Recording(
-            user_id=current_user.id,
-            audio_path=str(file_path),
-            original_filename=original_filename,
-            duration=None,
-        )
-
-        db.add(recording)
-        db.commit()
-        db.refresh(recording)
-
-        return recording
-
-    except Exception:
-        db.rollback()
-
+    except Exception as error:
         if file_path.exists():
             file_path.unlink()
 
         raise HTTPException(
-            status_code=(
-                status.HTTP_500_INTERNAL_SERVER_ERROR
+            status_code=500,
+            detail=(
+                "Could not save "
+                "the audio file."
             ),
-            detail="Audio upload failed.",
-        )
+        ) from error
 
     finally:
-        await audio.close()
+        audio.file.close()
+
+
+    file_size = (
+        file_path.stat().st_size
+    )
+
+
+    if file_size == 0:
+        file_path.unlink(
+            missing_ok=True
+        )
+
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The uploaded audio "
+                "file is empty."
+            ),
+        )
+
+
+    if file_size > MAX_FILE_SIZE:
+        file_path.unlink(
+            missing_ok=True
+        )
+
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "Audio file must not "
+                "exceed 15 MB."
+            ),
+        )
+
+
+    try:
+        audio_duration = (
+            validate_audio_duration(
+                file_path
+            )
+        )
+
+    except ValueError as error:
+        file_path.unlink(
+            missing_ok=True
+        )
+
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+
+    recording = Recording(
+        user_id=current_user.id,
+        original_filename=(
+            original_filename
+        ),
+        audio_path=str(
+            file_path
+        ),
+        duration=audio_duration,
+    )
+
+
+    db.add(recording)
+    db.commit()
+    db.refresh(recording)
+
+
+    return {
+        "id": recording.id,
+        "original_filename": (
+            recording
+            .original_filename
+        ),
+        "duration": (
+            recording.duration
+        ),
+        "created_at": (
+            recording.created_at
+        ),
+    }
+
+
+@router.delete(
+    "/{recording_id}",
+    status_code=status.HTTP_200_OK,
+)
+def delete_recording(
+    recording_id: int,
+    current_user: User = Depends(
+        get_current_user
+    ),
+    db: Session = Depends(get_db),
+):
+    recording = db.scalar(
+        select(Recording).where(
+            Recording.id == recording_id,
+            Recording.user_id
+            == current_user.id,
+        )
+    )
+
+    if recording is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "Recording was not found."
+            ),
+        )
+
+    # Delete the physical file from disk
+    audio_file_path = Path(
+        recording.audio_path
+    )
+    try:
+        audio_file_path.unlink(
+            missing_ok=True
+        )
+    except Exception as error:
+        print(
+            "Error deleting audio file "
+            f"from disk: {error}"
+        )
+
+    db.delete(recording)
+    db.commit()
+
+    return {
+        "message": (
+            "Recording and associated "
+            "analysis deleted successfully."
+        )
+    }

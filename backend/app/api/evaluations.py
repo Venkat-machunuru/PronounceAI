@@ -13,12 +13,11 @@ from app.models.evaluation import Evaluation
 from app.models.recording import Recording
 from app.models.user import User
 from app.schemas.evaluation import (
-    EvaluationCreate,
     EvaluationResponse,
     RecordingHistoryResponse,
 )
-from app.services.pronunciation import (
-    calculate_pronunciation_score,
+from app.services.transcription import (
+    analyze_pronunciation,
 )
 
 
@@ -35,25 +34,34 @@ router = APIRouter(
 )
 def evaluate_recording(
     recording_id: int,
-    evaluation_data: EvaluationCreate,
     current_user: User = Depends(
         get_current_user
     ),
     db: Session = Depends(get_db),
 ):
+    # Find the recording and confirm
+    # that it belongs to the logged-in user.
     recording = db.scalar(
         select(Recording).where(
             Recording.id == recording_id,
-            Recording.user_id == current_user.id,
+            Recording.user_id
+            == current_user.id,
         )
     )
 
     if recording is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recording was not found.",
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "Recording was not found."
+            ),
         )
 
+
+    # Prevent the same recording from
+    # being evaluated more than once.
     existing_evaluation = db.scalar(
         select(Evaluation).where(
             Evaluation.recording_id
@@ -63,38 +71,66 @@ def evaluate_recording(
 
     if existing_evaluation:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
             detail=(
                 "This recording has already "
                 "been evaluated."
             ),
         )
 
-    result = calculate_pronunciation_score(
-        expected_text=(
-            evaluation_data.expected_text
-        ),
-        spoken_text=(
-            evaluation_data.spoken_text
-        ),
-    )
 
+    # Whisper transcribes the audio and
+    # returns word-level confidence data.
+    try:
+        analysis = analyze_pronunciation(
+            recording.audio_path
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=(
+                "Audio analysis failed. "
+                f"{str(error)}"
+            ),
+        ) from error
+
+
+    # Stop if Whisper could not detect
+    # understandable English speech.
+    if not analysis["transcript"]:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_CONTENT
+            ),
+            detail=(
+                "No understandable English "
+                "speech was detected."
+            ),
+        )
+
+
+    # Save the automatic analysis result.
     evaluation = Evaluation(
         recording_id=recording.id,
         transcript=(
-            evaluation_data.spoken_text
+            analysis["transcript"]
         ),
         accuracy_score=(
-            result["accuracy_score"]
+            analysis["accuracy_score"]
         ),
         correct_words=(
-            result["correct_words"]
+            analysis["correct_words"]
         ),
         wrong_words=(
-            result["wrong_words"]
+            analysis["wrong_words"]
         ),
         suggestions=(
-            result["suggestions"]
+            analysis["suggestions"]
         ),
     )
 
@@ -130,11 +166,15 @@ def get_recording_history(
 
     return [
         {
-            "recording_id": recording.id,
+            "recording_id": (
+                recording.id
+            ),
             "original_filename": (
                 recording.original_filename
             ),
-            "duration": recording.duration,
+            "duration": (
+                recording.duration
+            ),
             "created_at": (
                 recording.created_at
             ),

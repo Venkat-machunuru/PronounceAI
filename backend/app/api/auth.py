@@ -153,3 +153,43 @@ def get_my_profile(
     ),
 ):
     return current_user
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_200_OK,
+)
+def delete_my_account(
+    current_user: User = Depends(
+        get_current_user
+    ),
+    db: Session = Depends(get_db),
+):
+    from pathlib import Path
+
+    # Find and delete all audio files from disk first
+    for recording in current_user.recordings:
+        audio_file_path = Path(
+            recording.audio_path
+        )
+        try:
+            audio_file_path.unlink(
+                missing_ok=True
+            )
+        except Exception as error:
+            print(
+                "Error deleting user "
+                "audio file from disk: "
+                f"{error}"
+            )
+
+    # Delete the user from database
+    db.delete(current_user)
+    db.commit()
+
+    return {
+        "message": (
+            "User account and all associated "
+            "data deleted successfully."
+        )
+    }

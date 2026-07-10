@@ -15,6 +15,8 @@ function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] =
     useState("");
+  const [consentGiven, setConsentGiven] =
+    useState(false);
 
   const [error, setError] = useState("");
   const [loading, setLoading] =
@@ -25,6 +27,13 @@ function SignupPage() {
     event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
+
+    if (!consentGiven) {
+      setError(
+        "You must consent to the data processing policy."
+      );
+      return;
+    }
 
     setError("");
     setLoading(true);
@@ -89,6 +98,33 @@ function SignupPage() {
             required
           />
 
+          <div className="consent-container">
+            <input
+              id="consent"
+              type="checkbox"
+              checked={consentGiven}
+              onChange={(event) =>
+                setConsentGiven(
+                  event.target.checked
+                )
+              }
+              required
+            />
+
+            <label
+              htmlFor="consent"
+              className="consent-label"
+            >
+              I consent to the collection,
+              storage, and processing of my
+              audio files for English
+              pronunciation evaluation
+              under the India DPDP Act
+              2023. I can erase my data at
+              any time.
+            </label>
+          </div>
+
           {error && (
             <p className="error-message">
               {error}
@@ -97,7 +133,9 @@ function SignupPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={
+              loading || !consentGiven
+            }
           >
             {loading
               ? "Creating account..."

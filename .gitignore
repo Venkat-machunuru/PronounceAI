@@ -17,3 +17,8 @@ frontend/node_modules/
 # Frontend build output
 dist/
 frontend/dist/
+
+# Backend uploads and media
+backend/uploads/
+backend/app/__pycache__/
+*.pyc
