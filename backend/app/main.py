@@ -33,7 +33,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
     ],
     allow_origin_regex=(
-        r"http://(localhost|127\.0\.0\.1):\d+"
+        r"https?://(localhost|127\.0\.0\.1|.*\.vercel\.app|.*\.netlify\.app|.*\.pages\.dev|.*\.onrender\.com)(:\d+)?"
     ),
     allow_credentials=True,
     allow_methods=["*"],
